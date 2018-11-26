@@ -15,7 +15,7 @@ srun -p batch -N 2 -n 2 ./sssp_v3 ./testcase/random_100.in ./testcase/random_100
 
 using namespace std;
 
-int * mind;
+
 MPI_Request req;
 
 int tot_send=0;
@@ -53,7 +53,7 @@ int* my_vertice;
 int oo;
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mind_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void* recv_task(void* aa){
 	int recv_work_buf[2];
     int id=*(int*)aa;
@@ -69,19 +69,15 @@ void* recv_task(void* aa){
 			//update work_queue
 			pair<int,int> new_work = make_pair(recv_work_buf[0],recv_work_buf[1]);
 			//cout<<"recv work "<<new_work.first<<endl;
-            //
+            
+            // Record how many receive
             if(new_work.first>=0){
                 tot_receive++;
                 //cout<<"rank: "<<oo<<" recv: "<<tot_receive<<endl;
             }
             
-            pthread_mutex_lock(&mind_mutex);
-            if( new_work.first>=0 && ( mind[ new_work.first ]>new_work.second || mind[new_work.first] == -1 ) )
-                work_queue.push(new_work);
-            else if( new_work.first < 0 )
-                work_queue.push(new_work);
-            //work_queue.push(new_work);
-            pthread_mutex_unlock(&mind_mutex);
+
+            work_queue.push(new_work);
             
 			pthread_mutex_unlock(&queue_mutex);
 		}
@@ -93,9 +89,7 @@ void* recv_task(void* aa){
 int break_count=0;
 
 int main(int argc, char *argv[]){
-    // *** set debug send, receive number
-    //ofstream out("out.txt");
-    //ofstream out2("out2.txt");
+    
     
 	/// Set MPI Environment
 	int provided;
@@ -108,6 +102,7 @@ int main(int argc, char *argv[]){
 	cout.setf(ios::unitbuf);
 	int total_vertices, total_edges;
     oo = rank;
+    
 	/// Read Input File
 	FILE *input_file = fopen(argv[1], "rb");
 	fread(&total_vertices,sizeof(int),1,input_file);
@@ -122,11 +117,7 @@ int main(int argc, char *argv[]){
 		vertex_list[i]->cur_optimal = -1;
 		vertex_list[i]->group = -1;
 	}
-	
-    // *** initialize min distance
-    mind = new int[total_vertices];
-    fill_n(mind, total_vertices, -1);
-    
+
 	//naive grouping
 	int exceed = total_vertices % num_tasks;
 	int group_count[num_tasks];
@@ -162,14 +153,18 @@ int main(int argc, char *argv[]){
 	if(rank==0){
 		pair<int,int> source = make_pair(0,0); 
 		work_queue.push(source);
-        mind[0]=0;
 	}
 	
 	pthread_t threads[num_threads];
 	Work* next_work = new Work[num_threads];
 	MPI_Barrier(MPI_COMM_WORLD);
 	//cout<<"start cal\n";
-	//thread for communication
+    
+	// create thread: Each process has it own queue for other process, 
+    // from avoiding reflush buffer~
+    //
+    // EX：
+    // now we have 4 process, than each process have three work_queue
     int aa[num_tasks], bb;
     if(num_tasks==1){
         aa[0]=0;
@@ -304,9 +299,7 @@ int main(int argc, char *argv[]){
 				cur_vertex = vertex_list[cur_work.first];
 				if( cur_vertex->cur_optimal == -1 || cur_vertex->cur_optimal > cur_work.second){
                     
-                    pthread_mutex_lock(&mind_mutex);
-                    mind[ cur_vertex->id ]=cur_work.second;
-                    pthread_mutex_unlock(&mind_mutex);
+                    
 					
                     cur_vertex->cur_optimal = cur_work.second;
 					//cout<<rank<<" update :"<<vertex_list[cur_work.first]->cur_optimal<<endl;
